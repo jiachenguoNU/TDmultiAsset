@@ -1,2 +1,2 @@
 # TDmutiAsset
-Reduced-order Model Solver for Parametric High Dimensional Black-Scholes Equation
+Reduced-order Model Solver for Parametric MultiAsset Black-Scholes Equation
