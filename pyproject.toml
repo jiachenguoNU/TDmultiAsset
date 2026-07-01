@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tdbs"
+version = "0.1.0"
+description = "Tensor-decomposition (finite-element) Black-Scholes option pricing across the volatility surface"
+readme = "README.md"
+# The subspace solver ships as a prebuilt CPython extension (tdbs/joint_als*.so) built
+# for CPython 3.12 / Linux x86-64; pin the interpreter accordingly. See README "Compiled
+# solver module". Other modules are pure Python.
+requires-python = ">=3.12,<3.13"
+license = { file = "LICENSE" }   # PolyForm Noncommercial License 1.0.0 (binary, non-commercial only)
+authors = [{ name = "Jiachen Guo", email = "chiachenwo@gmail.com" }]
+keywords = ["option-pricing", "black-scholes", "tensor-decomposition", "PGD", "separated-representation", "finite-element", "quantitative-finance"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: Other/Proprietary License",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "jax>=0.4",
+    "jaxlib>=0.4",
+]
+
+[project.optional-dependencies]
+# Optional GPU direct solver (cuDSS via nvmath) for the joint ALS per-direction solves.
+gpu = ["cupy-cuda12x", "nvmath-python"]
+# Plotting / benchmark figures (examples/make_figures.py).
+figures = ["matplotlib>=3.6"]
+
+[project.urls]
+Homepage = "https://github.com/jiachenguoNU/td-blackscholes"
+
+[tool.setuptools.packages.find]
+include = ["tdbs*"]
+
+# Ship the compiled subspace-solver binary as package data.
+[tool.setuptools.package-data]
+tdbs = ["*.so"]
