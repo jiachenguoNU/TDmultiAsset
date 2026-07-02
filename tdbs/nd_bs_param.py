@@ -37,30 +37,47 @@ from .nd_bs_cp import (cp_rank, cp_zero, cp_neg, cp_add, cp_scale, cp_norm, cp_e
 # --------------------------------------------------------------------------- #
 
 
+_ELEM_TYPE = {1: 'D1LN2N', 2: 'D1LQ3N'}      # polynomial order -> Lagrange element type
+
+
+def _axis_orders(order):
+    """Normalise `order` to a per-axis dict {'x':., 's':., 't':.} (int -> same on all axes)."""
+    if isinstance(order, dict):
+        return {k: int(order.get(k, 1)) for k in ('x', 's', 't')}
+    return {k: int(order) for k in ('x', 's', 't')}
+
+
 def build_matrices_param(D, x_dom, sig_dom, t_dom, nelem_x, nelem_s, nelem_t,
-                         Gauss=8, elem_type='D1LN2N'):
+                         Gauss=8, order=1):
+    """`order` selects the Lagrange element order per axis: 1 = P1 (linear), 2 = P2
+    (quadratic).  Pass an int (same on every axis) or a dict {'x':.,'s':.,'t':.} -- e.g.
+    P2 on the price axes for O(h^2) basket Deltas.  The per-axis mesh (node grid,
+    connectivity, element type) is returned so `price_at`/`greeks_at` can reconstruct the
+    FE field and its shape-gradient B off-grid."""
+    orders = _axis_orders(order); et = {k: _ELEM_TYPE[o] for k, o in orders.items()}
     Lx = x_dom[1] - x_dom[0]; Ls = sig_dom[1] - sig_dom[0]; Tt = t_dom[1] - t_dom[0]
-    x, En_x = uniform_mesh_new(Lx, nelem_x); x = onp.array(x) + x_dom[0]
-    s, En_s = uniform_mesh_new(Ls, nelem_s); s = onp.array(s) + sig_dom[0]
-    t, En_t = uniform_mesh_new(Tt, nelem_t); t = onp.array(t) + t_dom[0]
-    n_x, n_s, n_t = nelem_x + 1, nelem_s + 1, nelem_t + 1
-    # plain Lagrange finite-element shape functions (no patch / adjacency / dilation)
+    x, En_x = uniform_mesh_new(Lx, nelem_x, orders['x']); x = onp.array(x) + x_dom[0]
+    s, En_s = uniform_mesh_new(Ls, nelem_s, orders['s']); s = onp.array(s) + sig_dom[0]
+    t, En_t = uniform_mesh_new(Tt, nelem_t, orders['t']); t = onp.array(t) + t_dom[0]
+    n_x, n_s, n_t = x.shape[0], s.shape[0], t.shape[0]      # = order*nelem + 1 per axis
+    # Lagrange finite-element shape functions (per-axis element type via the dict `et`)
     inp = {'coor': {'x': x, 's': s, 't': t}, 'Elem_nodes': {'x': En_x, 's': En_s, 't': En_t}}
-    sfd = get_FEM_shape_fun_dict(inp, Gauss, elem_type)
+    sfd = get_FEM_shape_fun_dict(inp, Gauss, et)
     gd = lambda k: (sfd[k]['N_fe'], sfd[k]['Grad_N'], sfd[k]['JxW'], sfd[k]['Elem_nodes'])
     Nx, Gx, Jx, Ex = gd('x'); Ns, Gs, Js, Es = gd('s'); Nt, Gt, Jt, Et = gd('t')
-    (Kbb, Knn) = get_matrix_x(x, En_x, Nx, Gx, Jx, Ex, Gauss, elem_type)
-    (Knb, _) = get_matrix_t(x, En_x, Nx, Gx, Jx, Ex, Gauss, elem_type)
+    (Kbb, Knn) = get_matrix_x(x, En_x, Nx, Gx, Jx, Ex, Gauss, et['x'])
+    (Knb, _) = get_matrix_t(x, En_x, Nx, Gx, Jx, Ex, Gauss, et['x'])
     Mx = bcoo_2_csr(Knn); Kx = bcoo_2_csr(Kbb); NBx = bcoo_2_csr(Knb); BNx = NBx.T.tocsr()
-    (_, Mssn) = get_matrix_x(s, En_s, Ns, Gs, Js, Es, Gauss, elem_type)
+    (_, Mssn) = get_matrix_x(s, En_s, Ns, Gs, Js, Es, Gauss, et['s'])
     Ms = bcoo_2_csr(Mssn)
-    Ws1 = bcoo_2_csr(get_matrix_weighted_mass(s, En_s, Ns, Js, Es, Gauss, elem_type, power=1))
-    Ws2 = bcoo_2_csr(get_matrix_weighted_mass(s, En_s, Ns, Js, Es, Gauss, elem_type, power=2))
-    (Ptb, Mtt) = get_matrix_t(t, En_t, Nt, Gt, Jt, Et, Gauss, elem_type)
+    Ws1 = bcoo_2_csr(get_matrix_weighted_mass(s, En_s, Ns, Js, Es, Gauss, et['s'], power=1))
+    Ws2 = bcoo_2_csr(get_matrix_weighted_mass(s, En_s, Ns, Js, Es, Gauss, et['s'], power=2))
+    (Ptb, Mtt) = get_matrix_t(t, En_t, Nt, Gt, Jt, Et, Gauss, et['t'])
     Mt = bcoo_2_csr(Mtt); PBt = bcoo_2_csr(Ptb)
     return dict(xg=x.reshape(-1), sg=s.reshape(-1), tg=t.reshape(-1), n_x=n_x, n_s=n_s, n_t=n_t,
                 Mx=[Mx] * D, Kx=[Kx] * D, NBx=[NBx] * D, BNx=[BNx] * D,
-                Ms=Ms, Ws1=Ws1, Ws2=Ws2, Mt=Mt, PBt=PBt)
+                Ms=Ms, Ws1=Ws1, Ws2=Ws2, Mt=Mt, PBt=PBt,
+                Ex=onp.asarray(En_x), Es=onp.asarray(En_s), Et=onp.asarray(En_t), et=et)
 
 
 # --------------------------------------------------------------------------- #

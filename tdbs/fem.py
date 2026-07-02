@@ -94,14 +94,20 @@ def get_quad_points(Gauss_Num, dim):
     return quad_points, quad_weights
 
 def get_shape_val_functions(elem_type):
-    """ Shape function generator
+    """ Shape function generator (parent domain xi in [-1, 1])
     """
     ############ 1D ##################
-    if elem_type == 'D1LN2N': # 1D linear element
+    if elem_type == 'D1LN2N': # 1D linear (P1) element, 2 nodes at xi = -1, +1
         f1 = lambda x: 1./2.*(1 - x[0])
-        f2 = lambda x: 1./2.*(1 + x[0]) 
+        f2 = lambda x: 1./2.*(1 + x[0])
         shape_fun = [f1, f2] # a list of functions
-    
+
+    elif elem_type == 'D1LQ3N': # 1D quadratic (P2) element, 3 nodes at xi = -1, 0, +1
+        f1 = lambda x: 1./2.*x[0]*(x[0] - 1.)   # left  vertex  (xi = -1)
+        f2 = lambda x: 1. - x[0]**2             # mid   node    (xi =  0)
+        f3 = lambda x: 1./2.*x[0]*(x[0] + 1.)   # right vertex  (xi = +1)
+        shape_fun = [f1, f2, f3]                # local order [left, mid, right]
+
     return shape_fun
 
 def get_shape_grad_functions(elem_type):
@@ -156,23 +162,27 @@ def get_shape_grads(Gauss_Num, dim, elem_type, XY, Elem_nodes):
     return shape_grads_physical, JxW
 
 def get_FEM_shape_fun_dict(input_dict, Gauss_Num_FEM, elem_type):
+    """`elem_type` may be a single string (same element on every coordinate) or a dict
+    mapping each coordinate key to its own element type, e.g. {'x': 'D1LQ3N', 's': 'D1LN2N',
+    't': 'D1LN2N'} -- this is what lets the axes independently be P1 or P2."""
     # Extract coordinate dictionary
     coor = input_dict['coor']  # {'x': ..., 't': ..., 'ksi': ...}
 
     # Extract element nodes dictionary
     elem_nodes = input_dict['Elem_nodes']  # {'x': ..., 't': ..., 'ksi': ...}
-    nodes_per_elem = 2
     dim = 1
-    shape_vals = get_shape_vals(Gauss_Num_FEM, dim, elem_type) # (quad_num, nodes_per_elem)  --shape fun values @ quads: same for differnt parameters
-    
-    
+
     results = {}
 
     # Loop over coordinate types ('x', 't', 'ksi') to perform computations
     for coord in coor:
-        
+
+        # per-coordinate element type (P1 'D1LN2N' or P2 'D1LQ3N')
+        et = elem_type[coord] if isinstance(elem_type, dict) else elem_type
+        shape_vals = get_shape_vals(Gauss_Num_FEM, dim, et) # (quad_num, nodes_per_elem) @ quads
+
         nelem_coords = len(elem_nodes[coord])
-        
+
         # Fetch parameters from the dictionaries
         value = coor[coord]
         elem_node = elem_nodes[coord]
@@ -181,12 +191,12 @@ def get_FEM_shape_fun_dict(input_dict, Gauss_Num_FEM, elem_type):
         gauss_pts_coor = np.sum(shape_vals[None, :, :, None] * physical_coor[:, None, :, :], axis=2) # (nelem, quad_num,)#gauss points coor
 
 
-        Grad_N, JxW = get_shape_grads(Gauss_Num_FEM, dim, elem_type, value, elem_node) # (nelem, quad_num, nodes_per_elem, dim)
+        Grad_N, JxW = get_shape_grads(Gauss_Num_FEM, dim, et, value, elem_node) # (nelem, quad_num, nodes_per_elem, dim)
         # Perform shape function computation
         N_fe = np.repeat(shape_vals[np.newaxis, :, :], nelem_coords, axis=0)
-        (K_Bx_Bx, K_Nx_Nx) = get_matrix_x(value,elem_node,N_fe, Grad_N, 
+        (K_Bx_Bx, K_Nx_Nx) = get_matrix_x(value,elem_node,N_fe, Grad_N,
                 JxW, elem_node,
-                Gauss_Num_FEM, elem_type)
+                Gauss_Num_FEM, et)
         
         results[coord] = {
             'N_fe': N_fe, # (nelem, quad_num, edex_max)
@@ -295,7 +305,9 @@ def assembly(BT_B, JxW, connectivity):
               Shape: (nelem, quad_num)
         connectivity: Connectivity for Mesh. Shape: (nelem, nodes_per_elem)
     """
-    dof_global = JxW.shape[0] + 1
+    # nnode = nelem * (nodes_per_elem - 1) + 1 for a contiguous 1D mesh: P1 -> nelem+1,
+    # P2 -> 2*nelem+1.  (Both shapes are static under jit, unlike connectivity.max().)
+    dof_global = JxW.shape[0] * (connectivity.shape[1] - 1) + 1
     edex_max = connectivity.shape[1]
     V = np.sum(BT_B * JxW[:, :, None, None], axis=(1)).reshape(-1) # (nelem, edex, edex) -> (1 ,)
     # I = np.repeat(connectivity, edex_max, axis=1).reshape(-1)

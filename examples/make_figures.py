@@ -2,6 +2,7 @@
 
 Produces:
   docs/price_1d_vs_bs.png    1D call: TD solver vs closed-form Black-Scholes across sigma
+  docs/greeks_1d_vs_bs.png   1D call Greeks (Delta/Vega/Theta via shape-gradient B) vs BS
   docs/basket_2d_vs_mc.png   D=2 basket: TD solver vs control-variate Monte-Carlo vs spot
 and prints the offline solve time + per-price latency (TD nodal contraction vs Monte-Carlo).
 
@@ -19,7 +20,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from tdbs import solve_call_1d, bs_call, solve_basket_2d, price_at, basket_cv_mc, cp_eval
+from tdbs import (solve_call_1d, bs_call, greeks_1d, bs_greeks,
+                  solve_basket_2d, price_at, basket_cv_mc, cp_eval)
 
 DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
 os.makedirs(DOCS, exist_ok=True)
@@ -52,6 +54,40 @@ fig.tight_layout(); fig.savefig(os.path.join(DOCS, "price_1d_vs_bs.png"), dpi=13
 print(f"  saved docs/price_1d_vs_bs.png  (1D rel-L2 ~ {np.mean(rels):.2e})")
 
 # =========================================================================== #
+# Figure 2 -- 1D first-order Greeks from the shape-gradient B (P2 on log-price)
+# =========================================================================== #
+# The Greeks come for free from the SAME separated solve: differentiate the FE field by
+# swapping the shape function N for its derivative B in one direction (greeks_1d). P2
+# (quadratic) elements on x = ln S make B element-linear -> O(h^2) Delta.
+print("Computing 1D Greeks (P2 on x = ln S; Delta/Vega/Theta from shape-gradient B)...")
+resG = solve_call_1d(K=K, r=r, q=q, T=T, nelem_x=100, nelem_s=100, nelem_t=100,
+                     order={'x': 2, 's': 1, 't': 1})
+Sg = np.linspace(0.6, 1.6, 61)
+GK = ('delta', 'vega', 'theta')
+GLAB = {'delta': r'$\Delta=\partial V/\partial S$',
+        'vega':  r'$\mathcal{V}=\partial V/\partial \sigma$',
+        'theta': r'$\Theta=\partial V/\partial t$'}
+fig, axes = plt.subplots(1, 3, figsize=(13.2, 4.2))
+g_rel = {k: [] for k in GK}
+for c, sv in zip([plt.cm.viridis(0.15), plt.cm.viridis(0.7)], (0.20, 0.35)):
+    num = {k: np.array([greeks_1d(resG, float(s), sv, T)[k] for s in Sg]) for k in GK}
+    ana = bs_greeks(Sg, K, r, q, sv, T)
+    band = (Sg >= 0.5 * K) & (Sg <= 2.0 * K)          # near-the-money band for the reported error
+    for ax, k in zip(axes, GK):
+        g_rel[k].append(np.linalg.norm((num[k] - ana[k])[band]) / np.linalg.norm(ana[k][band]))
+        ax.plot(Sg, ana[k], '-', color=c, lw=1.6, label=f"BS  $\\sigma$={sv:.2f}")
+        ax.plot(Sg[::4], num[k][::4], 'o', color=c, ms=4, mfc='none', label=f"TD via $B$  $\\sigma$={sv:.2f}")
+for ax, k in zip(axes, GK):
+    ax.set_xlabel("spot  $S$"); ax.set_title(GLAB[k]); ax.grid(alpha=0.3)
+axes[0].legend(fontsize=8)
+fig.suptitle("1D European-call first-order Greeks: TD solver via shape-gradient $B$ (markers) "
+             "vs Black-Scholes (lines)   |   P2 elements on $x=\\ln S$", y=1.03)
+fig.tight_layout()
+fig.savefig(os.path.join(DOCS, "greeks_1d_vs_bs.png"), dpi=130, bbox_inches='tight'); plt.close(fig)
+print("  saved docs/greeks_1d_vs_bs.png  (rel-L2  "
+      + ", ".join(f"{k} {np.mean(g_rel[k]):.1e}" for k in GK) + ")")
+
+# =========================================================================== #
 # D=2 basket solve (one offline solve), then figure + benchmark
 # =========================================================================== #
 print("Solving D=2 basket (Nx=90, Ns=Nt=50, ranks 19/80, 100 sweeps, sig-pad 0.05)...")
@@ -61,7 +97,7 @@ t_solve = time.time() - t0
 V, M, D = res2['V'], res2['M'], res2['D']
 w, q2, rho = res2['w'], res2['q'], res2['rho']
 
-# --- Figure 2: basket price vs common spot S0=S1, at two volatilities, TD vs CV-MC ---
+# --- Figure 3: basket price vs common spot S0=S1, at two volatilities, TD vs CV-MC ---
 spots = np.linspace(0.6, 1.6, 11)
 fig, ax = plt.subplots(figsize=(6.4, 4.6))
 b_rels = []

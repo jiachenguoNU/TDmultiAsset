@@ -22,12 +22,18 @@ from .joint_als import als_joint_op
 def solve_basket_2d(K=1.0, r=0.05, T=1.0, w=None, q=None, rho=None,
                     x_dom=(-5.0, 2.0), sig_dom=(0.15, 0.40),
                     Nx=29, Ns=29, Nt=29, rank1=16, rank2=32, niter=60,
-                    sig_pad=0.0, round_tol=1e-7, seed=0):
+                    sig_pad=0.0, round_tol=1e-7, seed=0, order=1):
     """Solve the D=2 basket call. Returns a dict with:
         V        : the 2-asset solution in CP form (axis order x0,x1,s0,s1,tau)
-        M        : mesh-matrix dict (node grids 'xg','sg','tg' for tdbs.price_at)
+        M        : mesh-matrix dict (node grids 'xg','sg','tg', connectivity + element type
+                   for tdbs.price_at / tdbs.greeks_at)
         sig_dom  : the region of interest;  sig_mesh : the padded mesh domain actually solved
         w, q, rho, K, r, T, D : the market/option parameters used
+
+    `order` selects the Lagrange element order (1 = P1 linear, 2 = P2 quadratic); pass an int
+    for all axes or a dict {'x':.,'s':.,'t':.} for per-axis control.  P2 on the price/vol axes
+    makes the shape-gradient B element-linear, so `greeks_at` recovers Delta/Vega at O(h^2).
+    Note each P2 axis roughly doubles its node count (and the joint-ALS solve cost).
     """
     D = 2
     w   = np.ones(D) / D if w is None else np.asarray(w, float)
@@ -42,7 +48,7 @@ def solve_basket_2d(K=1.0, r=0.05, T=1.0, w=None, q=None, rho=None,
     nelem_s = nelem_s_roi + 2 * pad_elems
     t_dom = (0.0, T)
 
-    M = build_matrices_param(D, x_dom, sig_mesh, t_dom, Nx - 1, nelem_s, Nt - 1)
+    M = build_matrices_param(D, x_dom, sig_mesh, t_dom, Nx - 1, nelem_s, Nt - 1, order=order)
     pf = basket_payoff_full(M, w, K)
     af = basket_asymp_cp(M, w, K, r, q)
 
@@ -56,4 +62,4 @@ def solve_basket_2d(K=1.0, r=0.05, T=1.0, w=None, q=None, rho=None,
     V = nested_price_param(D, M, rho, r, q, pf, af, 0.0, num_mode=maxrank,
                            round_tol=round_tol, round_rank=maxrank, solver_fn=solver_fn, verbose=False)
     return {'V': V[tuple(range(D))], 'M': M, 'sig_dom': sig_dom, 'sig_mesh': sig_mesh,
-            'w': w, 'q': q, 'rho': rho, 'K': K, 'r': r, 'T': T, 'D': D}
+            'w': w, 'q': q, 'rho': rho, 'K': K, 'r': r, 'T': T, 'D': D, 'order': order}

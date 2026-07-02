@@ -17,6 +17,29 @@ def bs_call(S, K, r, q, sigma, tau):
     return S * np.exp(-q * tau) * ndtr(d1) - K * np.exp(-r * tau) * ndtr(d2)
 
 
+def bs_greeks(S, K, r, q, sigma, tau):
+    """First-order Black-Scholes-Merton European-call Greeks (analytic reference).
+
+    Returns a dict of arrays (shaped like S):
+        delta = dV/dS,   vega = dV/dsigma,   theta = dV/dt  (CALENDAR time, = -dV/dtau).
+    Matches the conventions of `pricer_1d.greeks_1d` (theta per unit calendar time, tau =
+    time-to-maturity), so the two are directly comparable.
+    """
+    S = np.asarray(S, float)
+    if tau <= 0:                                        # at expiry: payoff kink
+        z = np.zeros_like(S)
+        return {'delta': (S > K).astype(float), 'vega': z, 'theta': z}
+    sq = sigma * np.sqrt(tau)
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma ** 2) * tau) / sq
+    d2 = d1 - sq
+    pdf = np.exp(-0.5 * d1 ** 2) / np.sqrt(2.0 * np.pi)  # standard normal pdf phi(d1)
+    delta = np.exp(-q * tau) * ndtr(d1)
+    vega = S * np.exp(-q * tau) * pdf * np.sqrt(tau)
+    theta = (-S * np.exp(-q * tau) * pdf * sigma / (2.0 * np.sqrt(tau))
+             - r * K * np.exp(-r * tau) * ndtr(d2) + q * S * np.exp(-q * tau) * ndtr(d1))
+    return {'delta': delta, 'vega': vega, 'theta': theta}
+
+
 def bs_call_weighted(S, K, r, q, sigma, tau, w):
     """Value of the payoff max(w*S - K, 0): a single asset with weight w.
 

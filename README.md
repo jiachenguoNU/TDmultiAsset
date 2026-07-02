@@ -20,6 +20,15 @@ Black–Scholes price across the whole volatility range from a *single* offline 
 
 ![1D call: TD vs Black–Scholes](docs/price_1d_vs_bs.png)
 
+**First-order Greeks — for free from the same solve.** The separated solution *is* a
+finite-element field, so its Greeks follow by swapping each shape function `N` for its
+derivative `B` in the differentiated direction — Δ = ∂V/∂S, 𝒱 = ∂V/∂σ, Θ = ∂V/∂t — with no
+bump-and-reprice and no second model. They track closed-form Black–Scholes across the whole
+surface (markers = TD via `B`, lines = analytic; quadratic **P2** elements on the log-price
+axis give an `O(h²)`-accurate Delta):
+
+![1D call Greeks: TD via shape-gradient B vs Black–Scholes](docs/greeks_1d_vs_bs.png)
+
 **D=2 basket call** — priced against control-variate Monte-Carlo across spot at two
 volatilities (markers = TD, lines = CV-MC; `rel-L2 ≈ 0.6%`):
 
@@ -54,8 +63,8 @@ The transformed, constant-in-`x` governing equation is
 ```
 
 with the terminal payoff entering as the **initial condition at `τ = 0`**. Discretising each
-1D axis with linear finite elements turns the weak form into a **Kronecker sum** of 1D
-operators:
+1D axis with Lagrange finite elements (linear **P1** or quadratic **P2**) turns the weak form
+into a **Kronecker sum** of 1D operators:
 
 ```
 time       :  M_x  ⊗  M_σ        ⊗  P_τ        (P_τ = Petrov–Galerkin  ∫ N ∂_τ B)
@@ -121,21 +130,22 @@ from tdbs import solve_basket_2d, solve_call_1d, price_at, basket_cv_mc
 # --- D=2 basket: one offline solve prices the whole surface ---
 res = solve_basket_2d(Nx=90, Ns=50, Nt=50, rank1=19, rank2=80, niter=100, sig_pad=0.05)
 V, M = res['V'], res['M']
-price = price_at(V, 2, [1.0, 1.0], [0.25, 0.25], res['T'], M)   # ATM, both σ=0.25 (linear interp)
+price = price_at(V, 2, [1.0, 1.0], [0.25, 0.25], res['T'], M)   # ATM, both σ=0.25 (FE reconstruction)
 mc    = basket_cv_mc(np.ones(2), np.array([0.25, 0.25]), res['K'], res['r'],
                      res['q'], res['w'], res['rho'], res['T'])         # validation reference
 
-# --- 1D vanilla call (plain Lagrange FE): one offline solve, off-grid prices by interpolation ---
-from tdbs import interp_price
-res1 = solve_call_1d(nelem_x=100, nelem_s=100, nelem_t=100)   # full surface u[x, sigma, tau]
-p = interp_price(res1, S=1.0, sigma=0.27, tau=1.0)            # linear interp at an off-grid sigma
+# --- 1D vanilla call (Lagrange FE, P1 or P2): one offline solve -> off-grid prices AND Greeks ---
+from tdbs import interp_price, greeks_1d
+res1 = solve_call_1d(nelem_x=100, nelem_s=100, nelem_t=100, order={'x': 2})  # P2 on x = ln S
+p = interp_price(res1, S=1.0, sigma=0.27, tau=1.0)            # off-grid price (FE reconstruction)
+g = greeks_1d(res1, S=1.0, sigma=0.27, tau=1.0)              # {'price','delta','vega','theta'} via B
 ```
 
 ## Repository layout
 
 ```
 tdbs/
-  fem.py              Lagrange (linear) finite-element shape functions, 1D matrices & sparse assembly
+  fem.py              Lagrange (P1/P2) finite-element shape functions, 1D matrices & sparse assembly
   bs_assembly.py      σ^p-weighted mass-matrix assembly
   generate_mesh.py    uniform 1D meshes
   nd_bs.py            separated-representation operator term-lists (Kronecker structure)
@@ -143,10 +153,10 @@ tdbs/
   nd_bs_param.py      parametric SPT build, nested lift, level solve & hierarchy
   joint_als.*.so      joint fixed-rank ALS sub-solver — COMPILED CPython extension (binary; source not included)
   solver1d.py         1D greedy-PGD alternating sweep
-  pricer_1d.py        high-level 1D call pricer  (solve_call_1d; interp_price for off-grid)
-  pricer_2d.py        high-level D=2 basket pricer + sigma-mesh padding  (solve_basket_2d)
-  evaluate.py         off-grid pricing by linear interpolation of the CP solution  (price_at)
-  reference.py        closed-form BS + control-variate Monte-Carlo references
+  pricer_1d.py        high-level 1D call pricer  (solve_call_1d, P1/P2; interp_price + greeks_1d off-grid)
+  pricer_2d.py        high-level D=2 basket pricer + sigma-mesh padding  (solve_basket_2d, P1/P2)
+  evaluate.py         off-grid basket pricing by FE reconstruction of the CP solution  (price_at)
+  reference.py        closed-form BS (price + Greeks) + control-variate Monte-Carlo references
 examples/
   price_1d.py         1D vanilla call vs analytic Black–Scholes
   price_2d.py         D=2 basket call vs control-variate Monte-Carlo
